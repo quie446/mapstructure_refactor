@@ -69,6 +69,31 @@ However, it is much simpler to just decode this into a `map[string]interface{}`
 structure, read the "type" key, then use something like this library
 to decode it into the proper structure.
 
+## Structured binding corrections
+
+On top of the ordinary `Decode` flow, an opt-in binding layer classifies
+decoding outcomes into four separately inspectable error classes without
+introducing a second decoder:
+
+- `BindingMissingRequired` — a field tagged `mapstructure:"...,required"` had
+  no matching input key.
+- `BindingTypeMismatch` — a value could not be converted to the field type;
+  each finding records whether `WeaklyTypedInput` was on, so strict and weak
+  runs are directly comparable.
+- `BindingUnusedKey` — an input key no field consumed.
+- `BindingZeroAmbiguous` — a present key decoded to the zero value, where an
+  explicit zero cannot be distinguished from an absent-field default.
+
+Use `DecodeWithBindings` for the classified report, `TwoPassBinding` for the
+generic-map → strong-type two-pass path, and `(*BindingReport).Lock` together
+with `VerifyLock` to freeze and re-verify the ordered conclusion across
+machines. `Decoder.RunBindingMatrix` runs a table of
+nested/squash/remain/omitempty combinations and stops the whole batch on an
+empty table, duplicate case, or expectation mismatch.
+
+These entry points never change the decoded result and never affect the
+historical `Decode`/`WeakDecode` behavior; enabling them only adds findings.
+
 ## Credits
 
 Mapstructure was originally created by [@mitchellh](https://github.com/mitchellh).

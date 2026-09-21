@@ -386,6 +386,22 @@ type DecoderConfig struct {
 type Decoder struct {
 	config           *DecoderConfig
 	cachedDecodeHook func(from reflect.Value, to reflect.Value) (any, error)
+
+	// binding, when non-nil, activates the structured binding layer. It is
+	// allocated only by the binding entry points, so the historical Decode
+	// path is untouched.
+	binding *bindingState
+}
+
+// bindingState is the per-decode state shared by the binding layer and the
+// existing struct walk.
+type bindingState struct {
+	report        *BindingReport
+	required      map[string]bool
+	present       map[string]bool
+	unused        map[string]bool
+	decodedOK     map[string]bool
+	zeroAmbiguous bool
 }
 
 // Metadata contains information about decoding a structure that
@@ -1718,8 +1734,16 @@ func (d *Decoder) decodeStructFromMap(name string, dataVal, val reflect.Value) e
 			fieldName = name + "." + fieldName
 		}
 
+		// Record the matched path for the binding layer before recursing so
+		// nested/squashed required keys are attributable to this exact input.
+		if d.binding != nil {
+			d.binding.present[fieldName] = true
+		}
+
 		if err := d.decode(fieldName, rawMapVal.Interface(), fieldValue); err != nil {
 			errs = append(errs, err)
+		} else if d.binding != nil {
+			d.binding.decodedOK[fieldName] = true
 		}
 	}
 
@@ -1772,6 +1796,19 @@ func (d *Decoder) decodeStructFromMap(name string, dataVal, val reflect.Value) e
 			name,
 			fmt.Errorf("has unset fields: %s", strings.Join(keys, ", ")),
 		))
+	}
+
+	// The binding layer needs the unused set even when field errors short
+	// circuit the metadata collection below, so gather it before joining.
+	if d.binding != nil && len(dataValKeysUnused) > 0 {
+		for rawKey := range dataValKeysUnused {
+			key := rawKey.(string)
+			if name != "" {
+				key = name + "." + key
+			}
+
+			d.binding.unused[key] = true
+		}
 	}
 
 	if err := errors.Join(errs...); err != nil {
