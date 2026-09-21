@@ -69,6 +69,38 @@ However, it is much simpler to just decode this into a `map[string]interface{}`
 structure, read the "type" key, then use something like this library
 to decode it into the proper structure.
 
+## Binding correction
+
+The binding layer runs on top of the same `Decoder`/`DecoderConfig` flow; it
+never replaces it. Use it when failures must be classified individually and
+reproduced across machines instead of collapsing into one joined error.
+
+`DecodeWithBindings` (or `NewBindingDecoder`) runs every input twice, once
+strict and once with `WeaklyTypedInput`, and returns a sorted, deduplicated
+`BindingReport`:
+
+- `missing_required`: a field carrying the `required` tag option is absent.
+- `type_mismatch`: a value cannot be converted even with weak conversion.
+- `weak_conversion_drift`: strict mode rejects but weak mode accepts the value.
+- `unused_key`: the input key is consumed by neither a field nor a `,remain` map.
+- `zero_value_missing_ambiguous`: a required key is present but holds the zero value.
+
+An empty input path aborts with `empty_input_path` rather than succeeding on an
+empty result.
+
+`GenerateBindingTable` turns nested, `,squash`, `,remain`, `,omitempty` and
+`,omitzero` combinations into a sorted matrix with a stable signature; an
+empty, duplicate, or blank row halts generation.
+
+`DecodeTwoPass` forces the `input -> map[string]any -> struct` route, records
+an input fingerprint and both key sets, and reports `field_lost_on_second_pass`
+when a generic-map key vanishes on the way to the typed struct.
+
+`NewAggregateLock` gates a report: issues must be ordered, individually
+inspectable, and — when extra and missing fields co-occur — carry
+`MigrationNotes`. Changing the `BindingPolicy` after locking changes its
+signature, so `Verify` forces the issue set through the gate again.
+
 ## Credits
 
 Mapstructure was originally created by [@mitchellh](https://github.com/mitchellh).
